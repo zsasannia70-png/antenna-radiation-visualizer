@@ -1,0 +1,44 @@
+{
+  "entities": {
+    "project": {
+      "title": "Saved Project",
+      "description": "A saved antenna configuration project",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns this project"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the project"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the project"
+        },
+        "configuration": {
+          "type": "object",
+          "description": "The configuration state of the antenna simulator"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerId", "name", "configuration", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/projects/{projectId}": {
+      "schema": {
+        "$ref": "#/entities/project"
+      },
+      "description": "User saved projects"
+    }
+  }
+}

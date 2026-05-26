@@ -1,0 +1,60 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- PRIMITIVES (Phase 3) ---
+    function isSignedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function isValidId(id) { return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- VALIDATION BLUEPRINTS (Phase 2) ---
+    function isValidProject(data) {
+      return data.keys().hasAll(['ownerId', 'name', 'configuration', 'createdAt', 'updatedAt'])
+        && data.ownerId is string && data.ownerId == request.auth.uid && data.ownerId.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.get('description', '') is string && data.get('description', '').size() <= 1000
+        && data.configuration is map
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- COLLECTIONS ---
+    match /projects/{projectId} {
+      // 8. Secure List Queries
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      
+      // Strict get for owner
+      allow get: if isSignedIn() && isValidId(projectId) && resource.data.ownerId == request.auth.uid;
+
+      // Create must precisely match the schema + no ghost fields
+      allow create: if isSignedIn() 
+        && isValidId(projectId)
+        && isValidProject(incoming())
+        && (incoming().keys().size() == 5 || (incoming().keys().size() == 6 && 'description' in incoming()))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && isValidId(projectId)
+        && existing().ownerId == request.auth.uid
+        && isValidProject(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'configuration', 'updatedAt'])
+        );
+
+      allow delete: if isSignedIn() 
+        && isValidId(projectId) 
+        && existing().ownerId == request.auth.uid;
+    }
+  }
+}

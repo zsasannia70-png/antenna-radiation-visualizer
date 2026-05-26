@@ -1,0 +1,5 @@
+{
+    "name": "Antenna Radiation Visualizer",
+    "description": "Calculate and visualize the E-Field radiation pattern for a center-fed dipole antenna.",
+    "requestFramePermissions": []
+}
