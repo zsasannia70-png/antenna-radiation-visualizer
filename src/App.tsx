@@ -1967,102 +1967,41 @@ export default function App() {
     toast.success("New manual project started.");
   };
 
-  // AI Function Handling
-  const handleAIQuery = async (query: string) => {
-    if (!query.trim()) return;
 
-    const newMessages = [...messages, { role: "user" as const, text: query }];
-    setMessages(newMessages);
-    setInput("");
-    setIsTyping(true);
+  // AI Engineering Consultant - RAG Implementation
+const handleAIQuery = async (query: string) => {
+  if (!query.trim()) return;
 
-    try {
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: query,
-        config: {
-          systemInstruction: AI_PROMPT,
-          tools: [
-            {
-              functionDeclarations: [
-                {
-                  name: "updateConfig",
-                  description:
-                    "Updates the antenna simulation configuration parameters.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    description: "Antenna configuration parameters",
-                    properties: {
-                      antName: { type: Type.STRING },
-                      type: { type: Type.STRING },
-                      freq: { type: Type.NUMBER },
-                      length: { type: Type.NUMBER },
-                      elements: { type: Type.NUMBER },
-                      spacing: { type: Type.NUMBER },
-                      geometry: {
-                        type: Type.STRING,
-                        enum: ["linear", "square", "circular", "triangular"],
-                      },
-                      phaseShift: { type: Type.NUMBER },
-                      stacks: { type: Type.NUMBER },
-                      stackSpacing: { type: Type.NUMBER },
-                      helixRadius: { type: Type.NUMBER },
-                      helixPitch: { type: Type.NUMBER },
-                      helixTurns: { type: Type.NUMBER },
-                      activeTab: {
-                        type: Type.STRING,
-                        enum: ["single", "2d", "3d"],
-                      },
-                      is3D: { type: Type.BOOLEAN },
-                    },
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      });
+  // 1. Add user message to the UI
+  setMessages(prev => [...prev, { role: "user" as const, text: query }]);
+  setInput(""); 
+  setIsTyping(true);
 
-      const text = response.text || "";
+  try {
+    // 2. Fetch answer from your Flowise RAG endpoint
+    const response = await fetch("https://cloud.flowiseai.com/api/v1/prediction/43c3fd60-f5e5-4b7e-bf72-a1885b466d02", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: query })
+    });
 
-      // Extract thought
-      const thoughtMatch = text.match(/<thought>([\s\S]*?)<\/thought>/);
-      const thought = thoughtMatch ? thoughtMatch[1].trim() : undefined;
-      const cleanText = text
-        .replace(/<thought>[\s\S]*?<\/thought>/g, "")
-        .trim();
+    const result = await response.json();
 
-      // Handle function calls
-      const calls = response.functionCalls;
-      if (calls && calls.length > 0) {
-        calls.forEach((call) => {
-          if (call.name === "updateConfig") {
-            setConfig((prev) => ({ ...prev, ...(call.args as any) }));
-          }
-        });
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          text: cleanText || "Configuration updated as requested.",
-          thought,
-        },
-      ]);
-    } catch (err) {
-      console.error(err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          text: "I encountered a processing error. Please verify your request parameters.",
-        },
-      ]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
+    // 3. Add bot response to the UI
+    setMessages(prev => [...prev, { 
+      role: "assistant" as const, 
+      text: result.text || result.answer || "Sorry, I couldn't find information on that." 
+    }]);
+  } catch (error) {
+    console.error("RAG Query Error:", error);
+    setMessages(prev => [...prev, { 
+      role: "assistant" as const, 
+      text: "Error: Unable to connect to the antenna engineering database." 
+    }]);
+  } finally {
+    setIsTyping(false);
+  }
+};
 
   const { lambda } = useMemo(() => calculatePhysics(config), [config.freq]);
 
@@ -3488,4 +3427,25 @@ export default function App() {
       />
     </div>
   );
+  // Function to communicate with the Flowise RAG chatbot
+  const queryFlowise = async (question: string) => {
+    try {
+      const response = await fetch(
+        "https://cloud.flowiseai.com/api/v1/prediction/43c3fd60-f5e5-4b7e-bf72-a1885b466d02",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ question }),
+        }
+      );
+      
+      const result = await response.json();
+      return result; 
+    } catch (error) {
+      console.error("Error connecting to Flowise chatbot:", error);
+      return { text: "Sorry, I'm having trouble connecting to the chatbot right now." };
+    }
+  };
 }

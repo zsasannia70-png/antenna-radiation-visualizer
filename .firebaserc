@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "ai-antenna-lab-test-2026"
-  }
+  },
+  "targets": {
+    "ai-antenna-lab-test-2026": {
+      "hosting": {
+        "app": [
+          "ai-antenna-lab-test-2026"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
