@@ -7,6 +7,17 @@ You can view the project live here:
 **[View Project Online](https://antenna-radiation-visualizer.vercel.app/)**
 
 ---
+## Pictures of Project Environment
+
+<img width="1915" height="868" alt="image" src="https://github.com/user-attachments/assets/040ee0a5-3dfd-4466-8798-3f24101dafaa" />
+
+<img width="1911" height="847" alt="image" src="https://github.com/user-attachments/assets/210f16a4-5f52-4655-92db-83efd546ad92" />
+
+<img width="1918" height="878" alt="image" src="https://github.com/user-attachments/assets/07fdf8cf-c168-4637-b247-84f8df1860e2" />
+
+<img width="491" height="650" alt="image" src="https://github.com/user-attachments/assets/683dd295-de61-4676-be2b-ba0f4b754fb6" />
+
+<img width="1912" height="873" alt="image" src="https://github.com/user-attachments/assets/0001b1b8-9064-4da6-b10a-aa656cdcd541" />
 
 ## Operational Modes
 The application offers a professional simulation environment with flexible configuration modes:
