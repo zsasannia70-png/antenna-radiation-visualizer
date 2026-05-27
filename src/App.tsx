@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
+import ReactMarkdown from 'react-markdown';
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Chart as ChartJS,
@@ -1766,7 +1766,7 @@ GUARDRAILS:
 You have access to a function 'updateConfig' which takes a JSON object of ConfigurationState fields.
 When updating 'type', use one of the strings from the available antenna categories.`;
 
-const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const aiClient = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
 
 // --- Main App ---
 
@@ -1982,7 +1982,7 @@ const handleAIQuery = async (query: string) => {
     const response = await fetch("https://cloud.flowiseai.com/api/v1/prediction/43c3fd60-f5e5-4b7e-bf72-a1885b466d02", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: query })
+      body: JSON.stringify({ question: query }),
     });
 
     const result = await response.json();
@@ -2961,7 +2961,7 @@ const handleAIQuery = async (query: string) => {
                     data={{
                       labels: Array.from(
                         { length: 180 },
-                        (_, i) => `${i * 2}°`,
+                        (_, i) => `${i * 2}┬░`,
                       ),
                       datasets: [
                         {
@@ -3111,9 +3111,9 @@ const handleAIQuery = async (query: string) => {
                         </div>
                       )}
                       <div
-                        className={`p-4 rounded-2xl text-xs leading-relaxed max-w-[90%] shadow-sm ${m.role === "user" ? "bg-blue-600 text-white rounded-tr-none" : "bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700"}`}
+                        className={`p-4 rounded-2xl text-xs leading-relaxed max-w-[90%] shadow-sm ${m.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-700 text-white'}`}
                       >
-                        {m.text}
+                        <ReactMarkdown>{m.text}</ReactMarkdown>
                       </div>
                     </div>
                   ))}

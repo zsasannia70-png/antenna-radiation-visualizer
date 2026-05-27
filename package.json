@@ -14,7 +14,7 @@
         "deploy": "gh-pages -d dist"
     },
     "dependencies": {
-        "@google/genai": "^1.29.0",
+        "@google/genai": "^1.52.0",
         "@google/generative-ai": "^0.24.1",
         "@react-three/drei": "^10.7.7",
         "@react-three/fiber": "^9.6.0",
@@ -34,6 +34,7 @@
         "react-dom": "^19.0.0",
         "react-hot-toast": "^2.6.0",
         "react-katex": "^3.1.0",
+        "react-markdown": "^10.1.0",
         "react-router-dom": "^7.14.1",
         "three": "^0.183.2",
         "vite": "^6.2.0"
