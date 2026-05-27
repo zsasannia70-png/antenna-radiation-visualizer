@@ -60,3 +60,8 @@ This laboratory tool bridges the gap between theoretical electromagnetics and pr
 
 ## Credits
 Developed as an educational project for the "Applied AI Engineering course".
+
+* **Zahra Sasannia**
+* South-Eastern Finaland University of Applied Sciences (Xamk)
+* Kotka, Finland
+  
