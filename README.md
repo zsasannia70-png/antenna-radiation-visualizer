@@ -22,7 +22,7 @@ The application offers a professional simulation environment with flexible confi
 
 ---
 
-## 🔬 Simulation & Intelligence
+## Simulation & Intelligence
 * **Run Simulation:** Configure your antenna layout and click "Run Simulation" to generate radiation patterns immediately. Scroll down on the left to see "Run Simulation" button.
 * **Mathematical Insights:** The application calculates and displays the **final pattern formula**, providing users with a deep understanding of the mathematical relationship of the radiation.
 * **AI-Powered Chatbot:** Our chatbot utilizes a **RAG (Retrieval-Augmented Generation)** architecture integrated with the **Google Gemini API**. By retrieving context-aware data related to antenna theory and your specific simulation parameters, the AI provides highly accurate, technical insights and troubleshooting assistance, rather than just generic responses.
