@@ -1294,21 +1294,76 @@ const AntennaElements3D = ({
 
 // --- AI Service ---
 
-const AI_PROMPT = `You are the Expert Antenna Professor and Laboratory Mentor. 
-You assist users in the Professional Antenna Radiation Laboratory. 
-You can explain physics, suggest optimizations, and perform configuration changes.
-Your tone is academic, authoritative, yet encouraging.
+const ANTENNA_TYPES = [
+  "Dipole (Half-Wave/Folded/Hertz)", "Short Dipole",
+  "Monopole (Whip/Rubber Ducky/Ground Plane/Marconi)", "J-Pole",
+  "Yagi-Uda", "Log-Periodic", "Parabolic Dish (Cassegrain/Gregorian)",
+  "Horn (Pyramidal/Conical)", "Helical (Helix)", "Spiral",
+  "Small Loop (NFC)", "Large Loop", "Patch (IFA/PIFA)", "Slot",
+  "Dielectric Resonator", "Biconical (Discone/Bow-tie/Fractal)",
+  "Turnstile (Batwing)", "V-Antenna (Rhombic/Beverage)", "Plasma Antenna",
+  "Phased Array (AESA/PESA)", "MIMO Array", "Leaky Feeder", "Ferrite Rod",
+];
 
-GUARDRAILS:
-1. Only discuss antenna theory, electromagnetics, and simulation parameters.
-2. Refuse to write generic code or discuss unrelated politics/pop culture.
-3. If asked for derivations, provide the final formula and explain the physical meaning.
-4. Always output your reasoning inside <thought> tags before responding.
+const AI_PROMPT = `You are the Expert Antenna Professor and Laboratory Mentor for the Antenna Radiation Laboratory. Your tone is academic, authoritative, yet encouraging.
 
-You have access to a function 'updateConfig' which takes a JSON object of ConfigurationState fields.
-When updating 'type', use one of the strings from the available antenna categories.`;
+WHAT YOU CAN CONTROL (via the updateConfig function):
+- Antenna element type. Must be exactly one of: ${ANTENNA_TYPES.join("; ")}.
+- Workspace mode (activeTab): "single" (one antenna), "2d" (2D array), "3d" (3D stacked array), or "manual".
+- Array geometry: "linear", "square", "circular", or "triangular" (only meaningful for 2d/3d arrays).
+- Numeric parameters: freq (MHz), length (m), elements (count), spacing (wavelengths), phaseShift (degrees), stacks (layers).
+- antName: a short friendly label for the design.
 
-const aiClient = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
+HOW TO BEHAVE:
+1. To BUILD or DESIGN an array you need THREE things: the antenna element type, the array geometry, and the number of elements. If the user asks to design or build an array and ANY of these is missing, DO NOT call updateConfig - instead ask for ONLY the missing item(s) and STOP.
+2. If the user asks for a 3D, cylindrical, or stacked array, you ALSO need the number of rows (stacks). Ask for it if it is missing.
+3. Whenever you list choices for the user (antenna types, geometries, row counts, etc.), format them as a Markdown bullet list - one option per line starting with "- ". NEVER put options comma-separated on a single line.
+4. Once you have every required detail, call updateConfig with ALL fields at once. For a 2D array set activeTab to "2d"; for a cylindrical/stacked array set activeTab to "3d" and set stacks. Convert units sensibly (2.4 GHz -> 2400 MHz).
+5. For a simple tweak to the EXISTING design (e.g. "set frequency to 2.4 GHz", "make it 8 elements", "add another row"), just call updateConfig with those fields.
+6. When the user says "this antenna" or "this array", they mean the CURRENT DESIGN STATE given below.
+7. For a pure THEORY or KNOWLEDGE question (NOT a design/build/change request), do NOT call any function and reply with EXACTLY this token and nothing else: ROUTE_TO_RAG
+8. Stay strictly on antenna theory, electromagnetics, and this simulation.`;
+
+// Structured tool schema: lets the model translate natural language into a
+// concrete parameter change (function calling). Only safe, enumerated fields
+// are exposed, so the model can never mutate arbitrary application state.
+const UPDATE_CONFIG_TOOL = {
+  functionDeclarations: [
+    {
+      name: "updateConfig",
+      description:
+        "Apply antenna simulation settings. Call this only when you have enough information to act. Include every field the user has specified for this design.",
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          type: {
+            type: Type.STRING,
+            description: "Antenna element type. Must be one of the exact allowed strings.",
+            enum: ANTENNA_TYPES,
+          },
+          activeTab: {
+            type: Type.STRING,
+            description: "Workspace mode: single, 2d, 3d, or manual.",
+            enum: ["single", "2d", "3d", "manual"],
+          },
+          geometry: {
+            type: Type.STRING,
+            description: "Array geometry (for 2d/3d arrays).",
+            enum: ["linear", "square", "circular", "triangular"],
+          },
+          antName: { type: Type.STRING, description: "Short friendly name for the design." },
+          freq: { type: Type.NUMBER, description: "Operating frequency in MHz." },
+          length: { type: Type.NUMBER, description: "Element length in meters." },
+          elements: { type: Type.INTEGER, description: "Number of antenna elements." },
+          spacing: { type: Type.NUMBER, description: "Element spacing in wavelengths (lambda)." },
+          phaseShift: { type: Type.NUMBER, description: "Progressive phase shift between elements, in degrees." },
+          stacks: { type: Type.INTEGER, description: "Number of stacked layers for 3D arrays." },
+        },
+      },
+    },
+  ],
+};
+
 
 // --- Main App ---
 
@@ -1511,39 +1566,179 @@ export default function App() {
 
 
   // AI Engineering Consultant - RAG Implementation
-const handleAIQuery = async (query: string) => {
-  if (!query.trim()) return;
+  const handleAIQuery = async (query: string) => {
+    if (!query.trim()) return;
 
-  // 1. Add user message to the UI
-  setMessages(prev => [...prev, { role: "user" as const, text: query }]);
-  setInput(""); 
-  setIsTyping(true);
+    // 1. Show the user's message immediately.
+    setMessages((prev) => [...prev, { role: "user" as const, text: query }]);
+    setInput("");
+    setIsTyping(true);
 
-  try {
-    // 2. Fetch answer from your Flowise RAG endpoint
-    const response = await fetch("https://cloud.flowiseai.com/api/v1/prediction/43c3fd60-f5e5-4b7e-bf72-a1885b466d02", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: query }),
-    });
+    // Snapshot of the current design, so the model can resolve "this antenna".
+    const contextNote =
+      `
 
-    const result = await response.json();
+CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab}, ` +
+      `geometry = ${config.geometry}, elements = ${config.elements}, frequency = ${config.freq} MHz, ` +
+      `spacing = ${config.spacing} lambda, rows/stacks = ${config.stacks}.`;
 
-    // 3. Add bot response to the UI
-    setMessages(prev => [...prev, { 
-      role: "assistant" as const, 
-      text: result.text || result.answer || "Sorry, I couldn't find information on that." 
-    }]);
-  } catch (error) {
-    console.error("RAG Query Error:", error);
-    setMessages(prev => [...prev, { 
-      role: "assistant" as const, 
-      text: "Error: Unable to connect to the antenna engineering database." 
-    }]);
-  } finally {
-    setIsTyping(false);
-  }
-};
+    // Bounded conversation history for memory (map our roles to Gemini's).
+    const history = messages.slice(-8).map((m) => ({
+      role: (m.role === "user" ? "user" : "model") as "user" | "model",
+      parts: [{ text: m.text }],
+    }));
+    const contents = [...history, { role: "user" as const, parts: [{ text: query }] }];
+
+    // Knowledge questions are answered by the Flowise RAG endpoint.
+    const askFlowiseRAG = async (question: string): Promise<string> => {
+      const res = await fetch(
+        "https://cloud.flowiseai.com/api/v1/prediction/43c3fd60-f5e5-4b7e-bf72-a1885b466d02",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        },
+      );
+      const data = await res.json();
+      return data.text || data.answer || "I couldn't find information on that.";
+    };
+
+    // General-knowledge fallback: if RAG can't answer, Gemini answers from its
+    // own knowledge, aware of the current design so "this antenna" resolves.
+    const askGeminiKnowledge = async (question: string): Promise<string> => {
+      const ai2 = new GoogleGenAI({
+        apiKey: import.meta.env.VITE_GEMINI_API_KEY || "",
+      });
+      const resp = await ai2.models.generateContent({
+        model: "gemini-3.5-flash-lite",
+        contents: [...history, { role: "user" as const, parts: [{ text: question }] }],
+        config: {
+          systemInstruction:
+            "You are an expert antenna and electromagnetics professor. Answer clearly and accurately in a few concise paragraphs. If the user refers to 'this antenna' or 'this array', answer about the current design described here. Stay strictly on antenna theory and electromagnetics." +
+            contextNote,
+        },
+      });
+      return (resp.text || "").trim();
+    };
+
+    // Heuristic: did the RAG endpoint effectively fail to answer the question?
+    const ragFailed = (answer: string): boolean => {
+      const a = answer.toLowerCase();
+      return (
+        a.length < 12 ||
+        a.includes("not sure") ||
+        a.includes("couldn't find") ||
+        a.includes("could not find") ||
+        a.includes("does not mention") ||
+        a.includes("do not mention") ||
+        a.includes("not explicitly") ||
+        a.includes("no information") ||
+        a.includes("provide more details") ||
+        a.includes("more context") ||
+        a.includes("which antenna") ||
+        a.includes("could you clarify") ||
+        a.includes("don't have") ||
+        a.includes("do not have")
+      );
+    };
+
+    // Does the question refer to the current on-screen design? If so, RAG (which
+    // has no view of the current config) can't help - go straight to Gemini.
+    const refersToCurrent = (q: string): boolean => {
+      const s = q.toLowerCase();
+      return (
+        s.includes("this antenna") || s.includes("this array") ||
+        s.includes("this design") || s.includes("this configuration") ||
+        s.includes("this model") || s.includes("current antenna") ||
+        s.includes("current array") || s.includes("current design") ||
+        s.includes("my antenna") || s.includes("my array")
+      );
+    };
+
+    try {
+      // 2. Stage one - Gemini decides: change the simulation (calls updateConfig),
+      //    ask a clarifying question, or flag a knowledge question (ROUTE_TO_RAG).
+      const ai = new GoogleGenAI({
+        apiKey: import.meta.env.VITE_GEMINI_API_KEY || "",
+      });
+
+      const gemini = await ai.models.generateContent({
+        model: "gemini-3.5-flash-lite",
+        contents,
+        config: {
+          systemInstruction: AI_PROMPT + contextNote,
+          tools: [UPDATE_CONFIG_TOOL],
+        },
+      });
+
+      const calls = gemini.functionCalls;
+
+      if (calls && calls.length > 0) {
+        // 3a. Command branch - apply every requested parameter change.
+        const patch: Partial<ConfigurationState> = {};
+        const applied: string[] = [];
+        for (const call of calls) {
+          if (call.name !== "updateConfig" || !call.args) continue;
+          for (const [key, value] of Object.entries(call.args)) {
+            (patch as any)[key] = value;
+            applied.push(`${key} = ${value}`);
+          }
+        }
+        if (applied.length > 0) {
+          setConfig((prev) => ({ ...prev, ...patch }));
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "ai" as const,
+              text: `Done - I updated ${applied.join(", ")}. Press "Run Simulation" to see the new radiation pattern.`,
+            },
+          ]);
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            { role: "ai" as const, text: "I understood a configuration request but received no valid parameters." },
+          ]);
+        }
+      } else {
+        // No function call: either a knowledge question (routing token) or a
+        // clarifying question / guidance the model produced itself.
+        const text = (gemini.text || "").trim();
+        if (!text || text.includes("ROUTE_TO_RAG")) {
+          // 3b. Knowledge branch.
+          let answer: string;
+          if (refersToCurrent(query)) {
+            // Question about the current design -> Gemini (with config context).
+            answer = await askGeminiKnowledge(query);
+            if (!answer) answer = await askFlowiseRAG(query);
+          } else {
+            // General knowledge -> Flowise RAG first, Gemini fallback if it fails.
+            answer = await askFlowiseRAG(query);
+            if (ragFailed(answer)) {
+              const general = await askGeminiKnowledge(query);
+              if (general) answer = general;
+            }
+          }
+          setMessages((prev) => [...prev, { role: "ai" as const, text: answer }]);
+        } else {
+          // 3c. Dialogue branch - show Gemini's clarifying question / guidance.
+          setMessages((prev) => [...prev, { role: "ai" as const, text }]);
+        }
+      }
+    } catch (error) {
+      console.error("AI pipeline error:", error);
+      try {
+        const fallback = await askFlowiseRAG(query);
+        setMessages((prev) => [...prev, { role: "ai" as const, text: fallback }]);
+      } catch {
+        setMessages((prev) => [
+          ...prev,
+          { role: "ai" as const, text: "Error: unable to reach the AI service right now." },
+        ]);
+      }
+    } finally {
+      setIsTyping(false);
+    }
+  };
 
   const { lambda } = useMemo(() => calculatePhysics(config), [config.freq]);
 
@@ -1657,22 +1852,20 @@ const handleAIQuery = async (query: string) => {
                 {userMenuOpen && (
                   <div className="absolute right-0 top-full pt-1.5 z-50">
                     <div
-                      className={`p-1 rounded-xl shadow-2xl border flex flex-col gap-1 w-36 ${
-                        config.theme === "dark"
-                          ? "bg-slate-800 border-slate-700 text-slate-200"
-                          : "bg-white border-slate-200 text-slate-700"
-                      }`}
+                      className={`p-1 rounded-xl shadow-2xl border flex flex-col gap-1 w-36 ${config.theme === "dark"
+                        ? "bg-slate-800 border-slate-700 text-slate-200"
+                        : "bg-white border-slate-200 text-slate-700"
+                        }`}
                     >
                       <button
                         onClick={() => {
                           setUserMenuOpen(false);
                           setProjectsOpen(true);
                         }}
-                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${
-                          config.theme === "dark"
-                            ? "hover:bg-slate-700 hover:text-white"
-                            : "hover:bg-slate-100 hover:text-slate-900"
-                        }`}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${config.theme === "dark"
+                          ? "hover:bg-slate-700 hover:text-white"
+                          : "hover:bg-slate-100 hover:text-slate-900"
+                          }`}
                       >
                         <FolderOpen className="w-4 h-4" /> Library
                       </button>
@@ -1681,29 +1874,26 @@ const handleAIQuery = async (query: string) => {
                           setUserMenuOpen(false);
                           setSaveModalOpen(true);
                         }}
-                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${
-                          config.theme === "dark"
-                            ? "hover:bg-slate-700 hover:text-white"
-                            : "hover:bg-slate-100 hover:text-slate-900"
-                        }`}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${config.theme === "dark"
+                          ? "hover:bg-slate-700 hover:text-white"
+                          : "hover:bg-slate-100 hover:text-slate-900"
+                          }`}
                       >
                         <Save className="w-4 h-4" /> Save Project
                       </button>
                       <div
-                        className={`h-px my-1 ${
-                          config.theme === "dark" ? "bg-slate-700" : "bg-slate-200"
-                        }`}
+                        className={`h-px my-1 ${config.theme === "dark" ? "bg-slate-700" : "bg-slate-200"
+                          }`}
                       />
                       <button
                         onClick={() => {
                           setUserMenuOpen(false);
                           handleLogout();
                         }}
-                        className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 text-left transition-colors ${
-                          config.theme === "dark"
-                            ? "text-red-400 hover:bg-red-950/40 hover:text-red-300"
-                            : "text-red-500 hover:bg-red-50 hover:text-red-700"
-                        }`}
+                        className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 text-left transition-colors ${config.theme === "dark"
+                          ? "text-red-400 hover:bg-red-950/40 hover:text-red-300"
+                          : "text-red-500 hover:bg-red-50 hover:text-red-700"
+                          }`}
                       >
                         <LogOut className="w-4 h-4" /> Sign Out
                       </button>
@@ -2190,13 +2380,12 @@ const handleAIQuery = async (query: string) => {
                         {config.manualElements.map((el, index) => (
                           <div
                             key={el.id}
-                            className={`p-3 rounded-xl border flex flex-col gap-2 transition-all cursor-pointer ${
-                              selectedElementId === el.id
-                                ? "bg-purple-950/20 border-purple-500/60"
-                                : config.theme === "dark"
-                                  ? "bg-slate-800/40 border-slate-700 hover:bg-slate-800/60"
-                                  : "bg-slate-100 border-slate-200 hover:bg-slate-200"
-                            }`}
+                            className={`p-3 rounded-xl border flex flex-col gap-2 transition-all cursor-pointer ${selectedElementId === el.id
+                              ? "bg-purple-950/20 border-purple-500/60"
+                              : config.theme === "dark"
+                                ? "bg-slate-800/40 border-slate-700 hover:bg-slate-800/60"
+                                : "bg-slate-100 border-slate-200 hover:bg-slate-200"
+                              }`}
                             onClick={() => setSelectedElementId(el.id)}
                           >
                             <div className="flex justify-between items-center">
@@ -2241,11 +2430,10 @@ const handleAIQuery = async (query: string) => {
                                       return { ...p, manualElements: updated };
                                     });
                                   }}
-                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${
-                                    config.theme === "dark"
-                                      ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
-                                      : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
-                                  }`}
+                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${config.theme === "dark"
+                                    ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
+                                    : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
+                                    }`}
                                 />
                               </div>
                               <div>
@@ -2266,11 +2454,10 @@ const handleAIQuery = async (query: string) => {
                                       return { ...p, manualElements: updated };
                                     });
                                   }}
-                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${
-                                    config.theme === "dark"
-                                      ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
-                                      : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
-                                  }`}
+                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${config.theme === "dark"
+                                    ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
+                                    : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
+                                    }`}
                                 />
                               </div>
                               <div>
@@ -2291,11 +2478,10 @@ const handleAIQuery = async (query: string) => {
                                       return { ...p, manualElements: updated };
                                     });
                                   }}
-                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${
-                                    config.theme === "dark"
-                                      ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
-                                      : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
-                                  }`}
+                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${config.theme === "dark"
+                                    ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
+                                    : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
+                                    }`}
                                 />
                               </div>
                             </div>
@@ -2982,9 +3168,9 @@ const handleAIQuery = async (query: string) => {
           body: JSON.stringify({ question }),
         }
       );
-      
+
       const result = await response.json();
-      return result; 
+      return result;
     } catch (error) {
       console.error("Error connecting to Flowise chatbot:", error);
       return { text: "Sorry, I'm having trouble connecting to the chatbot right now." };
