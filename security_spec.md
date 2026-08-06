@@ -22,4 +22,7 @@
 12. Attempting to update `createdAt`.
 
 ## 3. The Test Runner
-A `firestore.rules.test.ts` file will be provided to assert these payloads.
+The `firestore.rules.test.ts` file at the project root asserts all twelve payloads
+above, plus positive-path checks (a legitimate owner can create, read, update, and
+delete their own project). Run it against the Firestore emulator with `npm run test:rules`.
+All 17 tests pass.
