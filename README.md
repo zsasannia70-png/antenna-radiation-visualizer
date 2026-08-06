@@ -8,35 +8,27 @@ A web-based interactive platform for the electromagnetic analysis and visualizat
 ---
 
 ## Screenshots
-
+The main laboratory view — a single Spiral antenna rendered as realistic hardware, with the configuration panel and AI assistant.
 <img width="1915" height="868" alt="Main laboratory view" src="https://github.com/user-attachments/assets/040ee0a5-3dfd-4466-8798-3f24101dafaa" />
 
+3D array configuration — Helical elements in a triangular lattice, with the derived radiation formula.
 <img width="1911" height="847" alt="2D array configuration" src="https://github.com/user-attachments/assets/210f16a4-5f52-4655-92db-83efd546ad92" />
 
+A 3D circular array with its volumetric radiation pattern, alongside the AI assistant answering a theory question.
 <img width="1918" height="878" alt="3D array visualization" src="https://github.com/user-attachments/assets/07fdf8cf-c168-4637-b247-84f8df1860e2" />
 
+The per-user Project Library — saved simulation designs (type, frequency, lattice) backed by Cloud Firestore.
 <img width="491" height="650" alt="AI assistant" src="https://github.com/user-attachments/assets/683dd295-de61-4676-be2b-ba0f4b754fb6" />
 
+Manual mode in light theme — custom element placement with the rendered 3D radiation pattern and derived formula.
 <img width="1912" height="873" alt="Radiation pattern" src="https://github.com/user-attachments/assets/0001b1b8-9064-4da6-b10a-aa656cdcd541" />
 
-<!--
-  TWO SCREENSHOTS STILL TO ADD (they showcase the strongest feature — function calling —
-  so they are worth adding). Capture them from the running app and drop them in here:
+The AI assistant asks for missing details, then builds the array via function calling:
+<img width="1476" height="832" alt="3" src="https://github.com/user-attachments/assets/548b3a30-dd5d-4e23-bb4e-0507c2b39138" />
 
-    (A) A natural-language build: type
-        "Build a 2D circular array with Yagi-Uda antennas and 6 elements"
-        and capture the "Done - I updated type = Yagi-Uda, elements = 6..." reply WITH the
-        array rendered on the left (shows function calling changing the simulation).
+A follow-up question — the assistant remembers the current design (conversation memory + live design-state awareness):
 
-    (B) A follow-up: type "What is the gain of this antenna?" and capture the answer that
-        begins "Based on the current design state - a 6-element Yagi-Uda array..."
-        (shows conversation memory + live design-state awareness).
-
-  To add: open this README on GitHub (pencil / Edit), drag each PNG into the editor so GitHub
-  uploads it and generates an <img> link, then move that tag here and commit.
--->
-
----
+<img width="1030" height="767" alt="4" src="https://github.com/user-attachments/assets/2ed099a9-a013-432e-80bf-cd246d5d3639" />
 
 ## Feature Overview
 
