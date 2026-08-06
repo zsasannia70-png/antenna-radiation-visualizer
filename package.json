@@ -10,7 +10,8 @@
         "preview": "vite preview",
         "clean": "rm -rf dist",
         "lint": "tsc --noEmit",
-        "test:rules": "firebase emulators:exec --only firestore \"vitest run\"",
+        "test:unit": "vitest run src/physics.test.ts src/aiPipeline.test.ts",
+        "test:rules": "firebase emulators:exec --only firestore \"vitest run firestore.rules.test.ts\"",
         "predeploy": "npm run build",
         "deploy": "gh-pages -d dist"
     },

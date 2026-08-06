@@ -166,6 +166,7 @@ import {
   getArrayFactor,
   getCentroid,
 } from "./physics";
+import { ANTENNA_TYPES, ragFailed, decideAction } from "./aiPipeline";
 
 // --- Components ---
 
@@ -1294,17 +1295,6 @@ const AntennaElements3D = ({
 
 // --- AI Service ---
 
-const ANTENNA_TYPES = [
-  "Dipole (Half-Wave/Folded/Hertz)", "Short Dipole",
-  "Monopole (Whip/Rubber Ducky/Ground Plane/Marconi)", "J-Pole",
-  "Yagi-Uda", "Log-Periodic", "Parabolic Dish (Cassegrain/Gregorian)",
-  "Horn (Pyramidal/Conical)", "Helical (Helix)", "Spiral",
-  "Small Loop (NFC)", "Large Loop", "Patch (IFA/PIFA)", "Slot",
-  "Dielectric Resonator", "Biconical (Discone/Bow-tie/Fractal)",
-  "Turnstile (Batwing)", "V-Antenna (Rhombic/Beverage)", "Plasma Antenna",
-  "Phased Array (AESA/PESA)", "MIMO Array", "Leaky Feeder", "Ferrite Rod",
-];
-
 const AI_PROMPT = `You are the Expert Antenna Professor and Laboratory Mentor for the Antenna Radiation Laboratory. Your tone is academic, authoritative, yet encouraging.
 
 WHAT YOU CAN CONTROL (via the updateConfig function):
@@ -1566,179 +1556,127 @@ export default function App() {
 
 
   // AI Engineering Consultant - RAG Implementation
-  const handleAIQuery = async (query: string) => {
-    if (!query.trim()) return;
+const handleAIQuery = async (query: string) => {
+  if (!query.trim()) return;
 
-    // 1. Show the user's message immediately.
-    setMessages((prev) => [...prev, { role: "user" as const, text: query }]);
-    setInput("");
-    setIsTyping(true);
+  // 1. Show the user's message immediately.
+  setMessages((prev) => [...prev, { role: "user" as const, text: query }]);
+  setInput("");
+  setIsTyping(true);
 
-    // Snapshot of the current design, so the model can resolve "this antenna".
-    const contextNote =
-      `
+  // Snapshot of the current design, so the model can resolve "this antenna".
+  const contextNote =
+    `
 
 CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab}, ` +
-      `geometry = ${config.geometry}, elements = ${config.elements}, frequency = ${config.freq} MHz, ` +
-      `spacing = ${config.spacing} lambda, rows/stacks = ${config.stacks}.`;
+    `geometry = ${config.geometry}, elements = ${config.elements}, frequency = ${config.freq} MHz, ` +
+    `spacing = ${config.spacing} lambda, rows/stacks = ${config.stacks}.`;
 
-    // Bounded conversation history for memory (map our roles to Gemini's).
-    const history = messages.slice(-8).map((m) => ({
-      role: (m.role === "user" ? "user" : "model") as "user" | "model",
-      parts: [{ text: m.text }],
-    }));
-    const contents = [...history, { role: "user" as const, parts: [{ text: query }] }];
+  // Bounded conversation history for memory (map our roles to Gemini's).
+  const history = messages.slice(-8).map((m) => ({
+    role: (m.role === "user" ? "user" : "model") as "user" | "model",
+    parts: [{ text: m.text }],
+  }));
+  const contents = [...history, { role: "user" as const, parts: [{ text: query }] }];
 
-    // Knowledge questions are answered by the Flowise RAG endpoint.
-    const askFlowiseRAG = async (question: string): Promise<string> => {
-      const res = await fetch(
-        "https://cloud.flowiseai.com/api/v1/prediction/43c3fd60-f5e5-4b7e-bf72-a1885b466d02",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question }),
-        },
-      );
-      const data = await res.json();
-      return data.text || data.answer || "I couldn't find information on that.";
-    };
-
-    // General-knowledge fallback: if RAG can't answer, Gemini answers from its
-    // own knowledge, aware of the current design so "this antenna" resolves.
-    const askGeminiKnowledge = async (question: string): Promise<string> => {
-      const ai2 = new GoogleGenAI({
-        apiKey: import.meta.env.VITE_GEMINI_API_KEY || "",
-      });
-      const resp = await ai2.models.generateContent({
-        model: "gemini-3.5-flash-lite",
-        contents: [...history, { role: "user" as const, parts: [{ text: question }] }],
-        config: {
-          systemInstruction:
-            "You are an expert antenna and electromagnetics professor. Answer clearly and accurately in a few concise paragraphs. If the user refers to 'this antenna' or 'this array', answer about the current design described here. Stay strictly on antenna theory and electromagnetics." +
-            contextNote,
-        },
-      });
-      return (resp.text || "").trim();
-    };
-
-    // Heuristic: did the RAG endpoint effectively fail to answer the question?
-    const ragFailed = (answer: string): boolean => {
-      const a = answer.toLowerCase();
-      return (
-        a.length < 12 ||
-        a.includes("not sure") ||
-        a.includes("couldn't find") ||
-        a.includes("could not find") ||
-        a.includes("does not mention") ||
-        a.includes("do not mention") ||
-        a.includes("not explicitly") ||
-        a.includes("no information") ||
-        a.includes("provide more details") ||
-        a.includes("more context") ||
-        a.includes("which antenna") ||
-        a.includes("could you clarify") ||
-        a.includes("don't have") ||
-        a.includes("do not have")
-      );
-    };
-
-    // Does the question refer to the current on-screen design? If so, RAG (which
-    // has no view of the current config) can't help - go straight to Gemini.
-    const refersToCurrent = (q: string): boolean => {
-      const s = q.toLowerCase();
-      return (
-        s.includes("this antenna") || s.includes("this array") ||
-        s.includes("this design") || s.includes("this configuration") ||
-        s.includes("this model") || s.includes("current antenna") ||
-        s.includes("current array") || s.includes("current design") ||
-        s.includes("my antenna") || s.includes("my array")
-      );
-    };
-
-    try {
-      // 2. Stage one - Gemini decides: change the simulation (calls updateConfig),
-      //    ask a clarifying question, or flag a knowledge question (ROUTE_TO_RAG).
-      const ai = new GoogleGenAI({
-        apiKey: import.meta.env.VITE_GEMINI_API_KEY || "",
-      });
-
-      const gemini = await ai.models.generateContent({
-        model: "gemini-3.5-flash-lite",
-        contents,
-        config: {
-          systemInstruction: AI_PROMPT + contextNote,
-          tools: [UPDATE_CONFIG_TOOL],
-        },
-      });
-
-      const calls = gemini.functionCalls;
-
-      if (calls && calls.length > 0) {
-        // 3a. Command branch - apply every requested parameter change.
-        const patch: Partial<ConfigurationState> = {};
-        const applied: string[] = [];
-        for (const call of calls) {
-          if (call.name !== "updateConfig" || !call.args) continue;
-          for (const [key, value] of Object.entries(call.args)) {
-            (patch as any)[key] = value;
-            applied.push(`${key} = ${value}`);
-          }
-        }
-        if (applied.length > 0) {
-          setConfig((prev) => ({ ...prev, ...patch }));
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "ai" as const,
-              text: `Done - I updated ${applied.join(", ")}. Press "Run Simulation" to see the new radiation pattern.`,
-            },
-          ]);
-        } else {
-          setMessages((prev) => [
-            ...prev,
-            { role: "ai" as const, text: "I understood a configuration request but received no valid parameters." },
-          ]);
-        }
-      } else {
-        // No function call: either a knowledge question (routing token) or a
-        // clarifying question / guidance the model produced itself.
-        const text = (gemini.text || "").trim();
-        if (!text || text.includes("ROUTE_TO_RAG")) {
-          // 3b. Knowledge branch.
-          let answer: string;
-          if (refersToCurrent(query)) {
-            // Question about the current design -> Gemini (with config context).
-            answer = await askGeminiKnowledge(query);
-            if (!answer) answer = await askFlowiseRAG(query);
-          } else {
-            // General knowledge -> Flowise RAG first, Gemini fallback if it fails.
-            answer = await askFlowiseRAG(query);
-            if (ragFailed(answer)) {
-              const general = await askGeminiKnowledge(query);
-              if (general) answer = general;
-            }
-          }
-          setMessages((prev) => [...prev, { role: "ai" as const, text: answer }]);
-        } else {
-          // 3c. Dialogue branch - show Gemini's clarifying question / guidance.
-          setMessages((prev) => [...prev, { role: "ai" as const, text }]);
-        }
-      }
-    } catch (error) {
-      console.error("AI pipeline error:", error);
-      try {
-        const fallback = await askFlowiseRAG(query);
-        setMessages((prev) => [...prev, { role: "ai" as const, text: fallback }]);
-      } catch {
-        setMessages((prev) => [
-          ...prev,
-          { role: "ai" as const, text: "Error: unable to reach the AI service right now." },
-        ]);
-      }
-    } finally {
-      setIsTyping(false);
-    }
+  // Knowledge questions are answered by the Flowise RAG endpoint.
+  const askFlowiseRAG = async (question: string): Promise<string> => {
+    const res = await fetch(
+      "https://cloud.flowiseai.com/api/v1/prediction/43c3fd60-f5e5-4b7e-bf72-a1885b466d02",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      },
+    );
+    const data = await res.json();
+    return data.text || data.answer || "I couldn't find information on that.";
   };
+
+  // General-knowledge fallback: if RAG can't answer, Gemini answers from its
+  // own knowledge, aware of the current design so "this antenna" resolves.
+  const askGeminiKnowledge = async (question: string): Promise<string> => {
+    const ai2 = new GoogleGenAI({
+      apiKey: import.meta.env.VITE_GEMINI_API_KEY || "",
+    });
+    const resp = await ai2.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents: [...history, { role: "user" as const, parts: [{ text: question }] }],
+      config: {
+        systemInstruction:
+          "You are an expert antenna and electromagnetics professor. Answer clearly and accurately in a few concise paragraphs. If the user refers to 'this antenna' or 'this array', answer about the current design described here. Stay strictly on antenna theory and electromagnetics." +
+          contextNote,
+      },
+    });
+    return (resp.text || "").trim();
+  };
+
+  try {
+    // 2. Stage one - Gemini decides: change the simulation (calls updateConfig),
+    //    ask a clarifying question, or flag a knowledge question (ROUTE_TO_RAG).
+    const ai = new GoogleGenAI({
+      apiKey: import.meta.env.VITE_GEMINI_API_KEY || "",
+    });
+
+    const gemini = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+      contents,
+      config: {
+        systemInstruction: AI_PROMPT + contextNote,
+        tools: [UPDATE_CONFIG_TOOL],
+      },
+    });
+
+    // 3. Route the response through the pure pipeline logic (validated + tested).
+    const action = decideAction(gemini, query);
+
+    if (action.kind === "command") {
+      // Apply only the schema-validated parameter changes.
+      setConfig((prev) => ({ ...prev, ...action.patch }));
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "ai" as const,
+          text: `Done - I updated ${action.applied.join(", ")}. Press "Run Simulation" to see the new radiation pattern.`,
+        },
+      ]);
+    } else if (action.kind === "command-empty") {
+      setMessages((prev) => [
+        ...prev,
+        { role: "ai" as const, text: "I understood a configuration request but received no valid parameters." },
+      ]);
+    } else if (action.kind === "dialogue") {
+      // Clarifying question / guidance produced by the model.
+      setMessages((prev) => [...prev, { role: "ai" as const, text: action.text }]);
+    } else if (action.kind === "knowledge-current") {
+      // Question about the current design -> Gemini (with config context).
+      let answer = await askGeminiKnowledge(query);
+      if (!answer) answer = await askFlowiseRAG(query);
+      setMessages((prev) => [...prev, { role: "ai" as const, text: answer }]);
+    } else {
+      // knowledge-general -> Flowise RAG first, Gemini fallback if it fails.
+      let answer = await askFlowiseRAG(query);
+      if (ragFailed(answer)) {
+        const general = await askGeminiKnowledge(query);
+        if (general) answer = general;
+      }
+      setMessages((prev) => [...prev, { role: "ai" as const, text: answer }]);
+    }
+  } catch (error) {
+    console.error("AI pipeline error:", error);
+    try {
+      const fallback = await askFlowiseRAG(query);
+      setMessages((prev) => [...prev, { role: "ai" as const, text: fallback }]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: "ai" as const, text: "Error: unable to reach the AI service right now." },
+      ]);
+    }
+  } finally {
+    setIsTyping(false);
+  }
+};
 
   const { lambda } = useMemo(() => calculatePhysics(config), [config.freq]);
 
@@ -1852,20 +1790,22 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
                 {userMenuOpen && (
                   <div className="absolute right-0 top-full pt-1.5 z-50">
                     <div
-                      className={`p-1 rounded-xl shadow-2xl border flex flex-col gap-1 w-36 ${config.theme === "dark"
-                        ? "bg-slate-800 border-slate-700 text-slate-200"
-                        : "bg-white border-slate-200 text-slate-700"
-                        }`}
+                      className={`p-1 rounded-xl shadow-2xl border flex flex-col gap-1 w-36 ${
+                        config.theme === "dark"
+                          ? "bg-slate-800 border-slate-700 text-slate-200"
+                          : "bg-white border-slate-200 text-slate-700"
+                      }`}
                     >
                       <button
                         onClick={() => {
                           setUserMenuOpen(false);
                           setProjectsOpen(true);
                         }}
-                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${config.theme === "dark"
-                          ? "hover:bg-slate-700 hover:text-white"
-                          : "hover:bg-slate-100 hover:text-slate-900"
-                          }`}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${
+                          config.theme === "dark"
+                            ? "hover:bg-slate-700 hover:text-white"
+                            : "hover:bg-slate-100 hover:text-slate-900"
+                        }`}
                       >
                         <FolderOpen className="w-4 h-4" /> Library
                       </button>
@@ -1874,26 +1814,29 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
                           setUserMenuOpen(false);
                           setSaveModalOpen(true);
                         }}
-                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${config.theme === "dark"
-                          ? "hover:bg-slate-700 hover:text-white"
-                          : "hover:bg-slate-100 hover:text-slate-900"
-                          }`}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 text-left transition-colors ${
+                          config.theme === "dark"
+                            ? "hover:bg-slate-700 hover:text-white"
+                            : "hover:bg-slate-100 hover:text-slate-900"
+                        }`}
                       >
                         <Save className="w-4 h-4" /> Save Project
                       </button>
                       <div
-                        className={`h-px my-1 ${config.theme === "dark" ? "bg-slate-700" : "bg-slate-200"
-                          }`}
+                        className={`h-px my-1 ${
+                          config.theme === "dark" ? "bg-slate-700" : "bg-slate-200"
+                        }`}
                       />
                       <button
                         onClick={() => {
                           setUserMenuOpen(false);
                           handleLogout();
                         }}
-                        className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 text-left transition-colors ${config.theme === "dark"
-                          ? "text-red-400 hover:bg-red-950/40 hover:text-red-300"
-                          : "text-red-500 hover:bg-red-50 hover:text-red-700"
-                          }`}
+                        className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-2 text-left transition-colors ${
+                          config.theme === "dark"
+                            ? "text-red-400 hover:bg-red-950/40 hover:text-red-300"
+                            : "text-red-500 hover:bg-red-50 hover:text-red-700"
+                        }`}
                       >
                         <LogOut className="w-4 h-4" /> Sign Out
                       </button>
@@ -1932,6 +1875,7 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
           <div className="h-6 w-px bg-slate-300 dark:bg-slate-800 mx-2"></div>
 
           <button
+            aria-label="Toggle dark and light theme"
             onClick={() =>
               setConfig((p) => ({
                 ...p,
@@ -2380,12 +2324,13 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
                         {config.manualElements.map((el, index) => (
                           <div
                             key={el.id}
-                            className={`p-3 rounded-xl border flex flex-col gap-2 transition-all cursor-pointer ${selectedElementId === el.id
-                              ? "bg-purple-950/20 border-purple-500/60"
-                              : config.theme === "dark"
-                                ? "bg-slate-800/40 border-slate-700 hover:bg-slate-800/60"
-                                : "bg-slate-100 border-slate-200 hover:bg-slate-200"
-                              }`}
+                            className={`p-3 rounded-xl border flex flex-col gap-2 transition-all cursor-pointer ${
+                              selectedElementId === el.id
+                                ? "bg-purple-950/20 border-purple-500/60"
+                                : config.theme === "dark"
+                                  ? "bg-slate-800/40 border-slate-700 hover:bg-slate-800/60"
+                                  : "bg-slate-100 border-slate-200 hover:bg-slate-200"
+                            }`}
                             onClick={() => setSelectedElementId(el.id)}
                           >
                             <div className="flex justify-between items-center">
@@ -2430,10 +2375,11 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
                                       return { ...p, manualElements: updated };
                                     });
                                   }}
-                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${config.theme === "dark"
-                                    ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
-                                    : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
-                                    }`}
+                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${
+                                    config.theme === "dark"
+                                      ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
+                                      : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
+                                  }`}
                                 />
                               </div>
                               <div>
@@ -2454,10 +2400,11 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
                                       return { ...p, manualElements: updated };
                                     });
                                   }}
-                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${config.theme === "dark"
-                                    ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
-                                    : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
-                                    }`}
+                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${
+                                    config.theme === "dark"
+                                      ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
+                                      : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
+                                  }`}
                                 />
                               </div>
                               <div>
@@ -2478,10 +2425,11 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
                                       return { ...p, manualElements: updated };
                                     });
                                   }}
-                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${config.theme === "dark"
-                                    ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
-                                    : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
-                                    }`}
+                                  className={`w-full px-1.5 py-1 rounded text-xs select-none outline-none font-mono ${
+                                    config.theme === "dark"
+                                      ? "bg-black/40 border border-slate-700 text-white focus:border-purple-500"
+                                      : "bg-white border border-slate-300 text-slate-800 focus:border-purple-500"
+                                  }`}
                                 />
                               </div>
                             </div>
@@ -2860,10 +2808,12 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleAIQuery(input)}
+                    aria-label="Ask the AI assistant about antenna theory or optimizations"
                     placeholder="Ask about antenna theory or optimizations..."
                     className="flex-1 bg-slate-800 border-slate-700 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-600"
                   />
                   <button
+                    aria-label="Send message to the AI assistant"
                     onClick={() => handleAIQuery(input)}
                     disabled={isTyping}
                     className="p-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-white transition-colors disabled:opacity-50"
@@ -3168,9 +3118,9 @@ CURRENT DESIGN STATE: antenna type = ${config.type}, mode = ${config.activeTab},
           body: JSON.stringify({ question }),
         }
       );
-
+      
       const result = await response.json();
-      return result;
+      return result; 
     } catch (error) {
       console.error("Error connecting to Flowise chatbot:", error);
       return { text: "Sorry, I'm having trouble connecting to the chatbot right now." };
